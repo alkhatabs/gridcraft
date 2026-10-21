@@ -7,6 +7,9 @@
 //!   JSON says the entry was verified (`people_entry`).
 //!
 //! A missing or malformed file gives empty tables (or no names) and a warning.
+//!
+//! The same script also reads the optional craft-fonts input and writes `web_faces.rs`: the one face
+//! the web build has to carry inside itself. See [`web_faces`] for why only the web build.
 
 use std::fmt::Write as _;
 
@@ -24,6 +27,83 @@ fn main() {
     if let Err(e) = std::fs::write(&out, generate(&json, &people)) {
         println!("cargo::warning=writing {}: {e}", out.display());
     }
+    web_faces();
+}
+
+/// Scripts the web build carries a face for, with the egui font key it installs under. A browser has
+/// no font directories to scan, so a script missing here has no glyphs at all in the web build even
+/// where the desktop app draws it from system fonts. Arabic is listed because an Arabic workbook is
+/// mirrored and still has to be readable; the Han, Hangul, Thai and Hebrew faces run 10-20 MB each
+/// against a wasm file already near 20 MB, so those stay system-font-only.
+const WEB_SCRIPTS: &[(&str, &str)] = &[("Arab", "sys-arabic")];
+
+/// Optional craft-fonts input (https://github.com/storytold/craft-fonts, recipe from its
+/// `docs/integration.md`): with `CRAFT_FONTS_DIR=<checkout>`, the web build embeds one face per
+/// script in [`WEB_SCRIPTS`] as `WEB_FACES`. Unset, or on any other target, `WEB_FACES` is empty and
+/// nothing changes — the native app reads system fonts, which cover these scripts already. The faces
+/// are OFL-1.1, so whoever ships a build that embeds them ships `fonts/<face>/OFL.txt` alongside;
+/// releases set `CRAFT_FONTS_REQUIRED=1` so a web release cannot lose the face by accident.
+fn web_faces() {
+    println!("cargo::rerun-if-env-changed=CRAFT_FONTS_DIR");
+    println!("cargo::rerun-if-env-changed=CRAFT_FONTS_REQUIRED");
+    let wasm = std::env::var("CARGO_CFG_TARGET_ARCH").is_ok_and(|a| a == "wasm32");
+    let mut src = String::from("pub static WEB_FACES: &[(&str, &[u8])] = &[\n");
+    if wasm {
+        match std::env::var_os("CRAFT_FONTS_DIR").map(std::path::PathBuf::from) {
+            Some(dir) => match carried_faces(&dir) {
+                Ok((entries, loaded)) => {
+                    src.push_str(&entries);
+                    for (script, _) in WEB_SCRIPTS.iter().filter(|(_, k)| !loaded.iter().any(|l| l == *k)) {
+                        let message = format!("no {script} font in fonts/manifest.txt (craft-fonts too old?)");
+                        if std::env::var_os("CRAFT_FONTS_REQUIRED").is_some() {
+                            println!("cargo::error=CRAFT_FONTS_DIR={}: no {message}", dir.display());
+                        } else {
+                            println!("cargo::warning=CRAFT_FONTS_DIR={}: no {message}", dir.display());
+                        }
+                    }
+                }
+                Err(e) if std::env::var_os("CRAFT_FONTS_REQUIRED").is_some() => {
+                    println!("cargo::error=CRAFT_FONTS_DIR={}: {e}", dir.display());
+                }
+                Err(e) => println!("cargo::warning=building the web app without craft-fonts: CRAFT_FONTS_DIR={}: {e}", dir.display()),
+            },
+            None => println!("cargo::warning=no CRAFT_FONTS_DIR: the web app carries no non-Latin face, so Arabic cells draw as boxes"),
+        }
+    }
+    src.push_str("];\n");
+    let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap_or_default()).join("web_faces.rs");
+    if let Err(e) = std::fs::write(&out, src) {
+        println!("cargo::error=writing {}: {e}", out.display());
+    }
+}
+
+/// One `(key, include_bytes!)` entry per script in [`WEB_SCRIPTS`], first manifest line for that
+/// script wins. Keys, not script codes, come back: a later face can serve several scripts (a merged
+/// Noto CJK .ttc would), and the app installs by key.
+fn carried_faces(dir: &std::path::Path) -> Result<(String, Vec<String>), String> {
+    let manifest = dir.join("fonts/manifest.txt");
+    println!("cargo::rerun-if-changed={}", manifest.display());
+    let text = std::fs::read_to_string(&manifest).map_err(|e| format!("{}: {e}", manifest.display()))?;
+    let mut out = String::new();
+    let mut loaded_keys: Vec<String> = Vec::new();
+    for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
+        let f: Vec<&str> = line.split(" | ").map(str::trim).collect();
+        let [_family, _style, file, scripts, ..] = f.as_slice() else {
+            return Err(format!("malformed manifest line: {line}"));
+        };
+        let lines = scripts.split(',').map(str::trim).collect::<Vec<_>>();
+        let Some((_, key)) = WEB_SCRIPTS.iter().find(|(s, _)| lines.contains(s)) else {
+            continue;
+        };
+        if loaded_keys.iter().any(|k| k == key) {
+            continue; // one face per script: the app ends every chain with it once, not twice
+        }
+        let path = dir.join(file).canonicalize().map_err(|e| format!("{file}: {e}"))?;
+        println!("cargo::rerun-if-changed={}", path.display());
+        let _ = writeln!(out, "    ({key:?}, include_bytes!({:?})),", path.display().to_string());
+        loaded_keys.push(key.to_string());
+    }
+    Ok((out, loaded_keys))
 }
 
 fn read<T>(path: &std::path::Path, fallback: &str, parse: impl Fn(&str) -> Result<T, String>) -> Option<T> {
