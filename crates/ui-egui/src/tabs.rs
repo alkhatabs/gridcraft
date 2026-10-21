@@ -40,7 +40,12 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
     egui::Panel::bottom("sheet_tabs").exact_size(32.0).frame(egui::Frame::NONE.fill(t.tab_bar)).show(ui, |ui| {
         let rect = ui.max_rect();
         ui.painter().line_segment([rect.left_top(), rect.right_top()], Stroke::new(1.0, t.ribbon_border));
-        ui.horizontal_centered(|ui| {
+        // On a right-to-left sheet the whole bar mirrors, as the grid already does: the navigation
+        // cluster holds the right edge, `New sheet` the left, and the tabs run from the cluster
+        // leftwards. Only the strip's order changes; each tab's own contents stay as they are.
+        let rtl = app.sheet_rtl();
+        let bar_layout = if rtl { egui::Layout::right_to_left(egui::Align::Center) } else { egui::Layout::left_to_right(egui::Align::Center) };
+        ui.with_layout(bar_layout, |ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.add_space(8.0);
             if crate::widgets::icon_button(ui, Icon::Left, t.text_dim, "Previous sheet", vec2(24.0, 24.0)).clicked() {
@@ -61,13 +66,19 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
             }
             ui.add_space(8.0);
             let Some(d) = app.session.active() else { return };
-            let sheets: Vec<(usize, String, Option<[u8; 3]>, bool)> =
+            let mut sheets: Vec<(usize, String, Option<[u8; 3]>, bool)> =
                 d.wb.sheets
                     .iter()
                     .enumerate()
                     .filter(|(_, s)| s.visibility == Visibility::Visible)
                     .map(|(i, s)| (i, s.name.clone(), s.tab_color.and_then(|c| c.resolve(&d.wb.theme)), i == d.wb.active_sheet))
                     .collect();
+            // The viewport inside is a horizontal `ScrollArea`, which knows nothing about
+            // direction, so the reading order is carried by the data: reversed, the tabs are laid
+            // out left to right and still read right to left.
+            if rtl {
+                sheets.reverse();
+            }
             // Keep worksheet tabs in their own horizontally scrollable viewport. As in Excel, the
             // tabs get 60% of the bar and the grid's horizontal scrollbar the rest.
             let tabs_width = (ui.available_width() * 0.6).max(100.0);
@@ -159,7 +170,9 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                                 if resp.drag_stopped()
                                     && let Some(p) = ui.input(|inp| inp.pointer.interact_pos())
                                 {
-                                    let dx = p.x - r.center().x;
+                                    // A drag measures screen distance; on a reversed strip one slot
+                                    // to the right is one slot *earlier* in the workbook's order.
+                                    let dx = if rtl { r.center().x - p.x } else { p.x - r.center().x };
                                     let steps = (dx / w).round() as i64;
                                     if steps != 0 {
                                         let to = (i as i64 + steps).max(0) as usize;
@@ -215,10 +228,17 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
             if crate::widgets::icon_button(ui, Icon::Plus, t.text_dim, "New sheet (⇧F11)", vec2(26.0, 26.0)).clicked() {
                 app.run_or_alert("home.insertSheet", json!({}));
             }
-            // The track ends where the grid does, so it stops under the vertical scrollbar.
+            // The track ends where the grid does, so it stops under the vertical scrollbar: the
+            // grid's right edge on a left-to-right sheet, its left edge on a right-to-left one
+            // (`grid::show` already keeps the bar outside `app.grid.rect`).
             let avail = ui.available_rect_before_wrap();
-            let right = app.grid.rect.map_or(avail.right(), |r| r.right()).min(avail.right());
-            let track = Rect::from_min_max(pos2(avail.left() + 8.0, avail.center().y - 7.0), pos2(right, avail.center().y + 7.0));
+            let track = if rtl {
+                let left = app.grid.rect.map_or(avail.left(), |g| g.left()).max(avail.left());
+                Rect::from_min_max(pos2(left, avail.center().y - 7.0), pos2(avail.right() - 8.0, avail.center().y + 7.0))
+            } else {
+                let right = app.grid.rect.map_or(avail.right(), |r| r.right()).min(avail.right());
+                Rect::from_min_max(pos2(avail.left() + 8.0, avail.center().y - 7.0), pos2(right, avail.center().y + 7.0))
+            };
             crate::grid::horizontal_scrollbar(app, ui, track, &t);
         });
     });

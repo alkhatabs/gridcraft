@@ -170,10 +170,13 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         .exact_size(h)
         .frame(egui::Frame::NONE.fill(t.window).inner_margin(egui::Margin { left: 10, right: 10, top: 0, bottom: 6 }))
         .show(ui, |ui| {
-            // Tabs row.
+            // Tabs row. On a right-to-left sheet the strip mirrors, File tab and all, as the grid,
+            // the formula bar and the tab strip do; the card behind it spans the same width either way.
+            let rtl = app.sheet_rtl();
             let tabs_rect = Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), 32.0));
             ui.scope_builder(egui::UiBuilder::new().max_rect(tabs_rect), |ui| {
-                ui.horizontal(|ui| {
+                let row = if rtl { egui::Layout::right_to_left(egui::Align::Center) } else { egui::Layout::left_to_right(egui::Align::Center) };
+                ui.with_layout(row, |ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
                     ui.add_space(8.0);
                     file_menu(app, ui);
@@ -224,13 +227,23 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
             if collapsed {
                 return;
             }
-            // Ribbon card.
-            let card = Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), 88.0));
+            // Ribbon card. Its width comes from the row, not from the cursor the tab strip left
+            // behind: the strip is wider than the row at ordinary window widths and has no
+            // viewport, so it overflows — left on a mirrored sheet — and the card would follow it
+            // off screen (measured at 520 px: the card started at x = -135 and its first group
+            // went with it).
+            let card = Rect::from_min_size(pos2(tabs_rect.min.x, ui.cursor().min.y), vec2(tabs_rect.width(), 88.0));
+            ui.advance_cursor_after_rect(card);
             ui.painter().rect_filled(card, 10.0, t.ribbon);
             ui.painter().rect_stroke(card, 10.0, Stroke::new(1.0, t.ribbon_border), StrokeKind::Inside);
             let inner = card.shrink2(vec2(10.0, 6.0));
             ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
                 egui::ScrollArea::horizontal().scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(ui, |ui| {
+                    // Deliberately left to right, whatever the sheet: the groups overflow this card
+                    // at ordinary window widths, and `ScrollArea` has no notion of direction —
+                    // measured on the Home tab at 1200 px, a mirrored layout puts the last groups
+                    // off the left edge and scrolls them further away instead of into view.
+                    // The tab strip above mirrors because nothing scrolls inside it.
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
                         match app.ui.ribbon_tab.as_str() {
@@ -1736,7 +1749,7 @@ fn page_layout(app: &mut SheetApp, ui: &mut Ui) {
             act(app, "pageLayout.printHeadings", json!({"on": checkbox_on(resp.changed(), p)}));
         }
     });
-    let rtl = app.session.active().and_then(|d| d.wb.active()).is_some_and(|s| s.right_to_left);
+    let rtl = app.sheet_rtl();
     let r = big_button(ui, Icon::SheetRtl, "Sheet\nRight-to-Left", "Sheet Right-to-Left", false);
     if rtl {
         let t = Tokens::get(ui.ctx());

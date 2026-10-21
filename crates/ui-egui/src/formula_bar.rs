@@ -16,9 +16,13 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
         .exact_size(h)
         .frame(egui::Frame::NONE.fill(t.window).inner_margin(egui::Margin { left: 8, right: 8, top: 3, bottom: 3 }))
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
+            // On a right-to-left sheet the bar mirrors with the grid: Name Box at the right, the
+            // expand chevron at the left, the field between them.
+            let rtl = app.sheet_rtl();
+            let row = if rtl { egui::Layout::right_to_left(egui::Align::Center) } else { egui::Layout::left_to_right(egui::Align::Center) };
+            ui.with_layout(row, |ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                name_box(app, ui, &t);
+                name_box(app, ui, &t, rtl);
                 ui.add_space(4.0);
                 let editing = app.editor.is_some();
                 let c = if editing { t.text } else { t.text_disabled };
@@ -32,9 +36,16 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
                     app.open_dialog("insertFunction", json!({}));
                 }
                 ui.add_space(4.0);
-                // The formula field.
+                // The formula field. It is painted by hand, so it is anchored to the edge the
+                // layout advances from: `cursor().min` on a left-to-right row, and on a
+                // right-to-left one `cursor().max.x`, since the cursor's `min.x` is unbounded there.
                 let avail = ui.available_width() - 24.0;
-                let field = Rect::from_min_size(ui.cursor().min, vec2(avail, h - 6.0));
+                let field = if rtl {
+                    let right = ui.cursor().max.x;
+                    Rect::from_min_size(pos2(right - avail, ui.cursor().min.y), vec2(avail, h - 6.0))
+                } else {
+                    Rect::from_min_size(ui.cursor().min, vec2(avail, h - 6.0))
+                };
                 ui.painter().rect_filled(field, 4.0, t.input_bg);
                 ui.painter().rect_stroke(field, 4.0, Stroke::new(1.0, t.input_border), StrokeKind::Inside);
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(field.shrink2(vec2(6.0, 3.0))));
@@ -45,8 +56,15 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
                 } else {
                     // Show the active cell's content; clicking starts editing in the bar.
                     let text = active_input(app);
-                    let resp = child
-                        .add(egui::Label::new(egui::RichText::new(text).font(theme::ui_font(13.0)).color(t.text)).truncate().sense(Sense::click()));
+                    let mut label = egui::Label::new(egui::RichText::new(text).font(theme::ui_font(13.0)).color(t.text))
+                        .truncate()
+                        .sense(Sense::click());
+                    // The cell text itself is shaped either way by epaint; this only decides which
+                    // edge of the field it starts from, which is the edge the sheet reads from.
+                    if rtl {
+                        label = label.halign(egui::Align::Max);
+                    }
+                    let resp = child.add(label);
                     let click = child.interact(field, id.with("click"), Sense::click());
                     if resp.clicked() || click.clicked() {
                         app.begin_edit(None, true);
@@ -95,11 +113,16 @@ fn active_input(app: &SheetApp) -> String {
     String::new()
 }
 
-fn name_box(app: &mut SheetApp, ui: &mut egui::Ui, t: &Tokens) {
+fn name_box(app: &mut SheetApp, ui: &mut egui::Ui, t: &Tokens, rtl: bool) {
     let id = egui::Id::new("gridcraft.name_box");
     let shown = app.name_box_text();
     let mut text = app.name_box.clone().unwrap_or(shown.clone());
-    let rect = Rect::from_min_size(ui.cursor().min, vec2(118.0, 24.0));
+    // Painted by hand, so it takes the edge the row advances from; see the formula field above.
+    let rect = if rtl {
+        Rect::from_min_size(pos2(ui.cursor().max.x - 118.0, ui.cursor().min.y), vec2(118.0, 24.0))
+    } else {
+        Rect::from_min_size(ui.cursor().min, vec2(118.0, 24.0))
+    };
     ui.painter().rect_filled(rect, 4.0, t.input_bg);
     ui.painter().rect_stroke(rect, 4.0, Stroke::new(1.0, t.input_border), StrokeKind::Inside);
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(rect.min + vec2(6.0, 3.0), vec2(96.0, 18.0))));
@@ -138,7 +161,11 @@ fn name_box(app: &mut SheetApp, ui: &mut egui::Ui, t: &Tokens) {
     // Dropdown of names.
     let names: Vec<String> =
         app.session.active().map(|d| d.wb.names.iter().filter(|n| !n.hidden).map(|n| n.name.clone()).collect()).unwrap_or_default();
-    let mb = Rect::from_min_size(pos2(rect.right() - 16.0, rect.top() + 4.0), vec2(14.0, 16.0));
+    // The dropdown affordance sits at the end the box reads from, not always at its right.
+    let mb = Rect::from_min_size(
+        pos2(if rtl { rect.left() + 2.0 } else { rect.right() - 16.0 }, rect.top() + 4.0),
+        vec2(14.0, 16.0),
+    );
     icons::paint(ui.painter(), mb, Icon::Chevron, t.text_dim);
     let r = ui.interact(mb, id.with("drop"), Sense::click());
     egui::Popup::menu(&r).show(|ui| {
@@ -237,7 +264,7 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
                 (0, 1)
             };
             // Left/Right follow the screen on a right-to-left sheet.
-            let rtl = app.session.active().and_then(|d| d.wb.active()).is_some_and(|s| s.right_to_left);
+            let rtl = app.sheet_rtl();
             let dc = if rtl { -dc } else { dc };
             if ed.can_point() {
                 ui.input_mut(|i| {

@@ -823,6 +823,12 @@ impl SheetApp {
         self.view_key().and_then(|k| self.views.get(&k).copied()).unwrap_or_else(|| self.saved_view())
     }
 
+    /// Whether the active sheet reads right to left. The chrome outside the grid — ribbon, formula
+    /// bar, tab strip — asks this once a frame instead of walking the session at each site.
+    pub fn sheet_rtl(&self) -> bool {
+        self.session.active().is_some_and(|d| d.wb.active().is_some_and(|s| s.right_to_left))
+    }
+
     pub fn view_mut(&mut self) -> Option<&mut SheetView> {
         let k = self.view_key()?;
         let saved = self.saved_view();
