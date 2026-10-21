@@ -1167,6 +1167,10 @@ pub(crate) fn paint_quadrant(
         if sh.show_formulas && sh.cell(c).is_some_and(|cell| cell.formula.is_some()) {
             text = crate::formula_locale::display(&text, crate::i18n::current(p.ctx()).formula_locale(), wb, si);
         }
+        // Shaping reverses a right-to-left run, digits and all, so an Arabic-Indic figure is handed
+        // over already reversed (`bidi`). Width is what the reordering leaves untouched, so the
+        // measurement, the shrink-to-fit and the #### rule below all still hold.
+        let text = crate::bidi::order_digits(&text).into_owned();
         if text.is_empty() {
             continue;
         }

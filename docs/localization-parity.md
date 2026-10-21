@@ -26,12 +26,18 @@ right-to-left sheets and full complex-script support. Part of
   localized function names and `;` separators (#45). German with localized numbers and formulas
   is in PR #163 (open).
 - **Script support.** System-font fallback for CJK, Thai and Hebrew landed in #38 (closes #32;
-  #142 is still open pending confirmation). There is no complex-text shaping: Arabic and
-  Devanagari don't join or reorder, and there is no bidirectional layout. **Sheet Right-to-Left**
-  (`view.rightToLeft`, Page Layout › Sheet Options, XLSX `rightToLeft`) mirrors the grid (#146):
-  column A and the row headers on the right, the vertical scrollbar on the left; hit-testing,
-  arrow keys, editor, popups and floating objects follow; text stays left-to-right inside its box
-  (no bidi). The chrome follows the sheet: the worksheet tabs read from the navigation cluster
+  #142 is still open pending confirmation). Arabic joins: egui 0.36 shapes through harfrust and
+  skrifa, so connected forms appear as soon as a face covering the script is loaded, and the web
+  build now embeds one (`crates/ui-egui/build.rs` reads `$CRAFT_FONTS_DIR`, `theme.rs` installs it as
+  `sys-arabic`); a native build reaches a system face through the fallback chain. Devanagari is still
+  unshaped. There is no **bidirectional layout**: egui splits runs by font face and lets the shaper
+  guess each run's direction from its script, so letters come out right and a figure whose digits do
+  not follow the script's direction comes out reversed. `bidi::order_digits` hands an Arabic-Indic
+  figure to the shaper pre-reversed where a value is painted (`grid.rs`, `formula_bar.rs`); a Hebrew
+  run mixed with Latin, a chart label and a worksheet tab name still get the shaper's guess.
+  **Sheet Right-to-Left** (`view.rightToLeft`, Page Layout › Sheet Options, XLSX `rightToLeft`)
+  mirrors the grid (#146): column A and the row headers on the right, the vertical scrollbar on the
+  left; hit-testing, arrow keys, editor, popups and floating objects follow. The chrome follows the sheet: the worksheet tabs read from the navigation cluster
   leftwards (a drag reorders against that order), the ribbon's tab row and the formula bar mirror,
   and the horizontal scrollbar spans to the grid's left edge. The ribbon's group strip keeps its
   left-to-right order — `ScrollArea` has no direction, so mirroring it pushed the last groups off
@@ -51,7 +57,7 @@ separators, number/date formats, machine translation with agent review, and scri
 | Simplified Chinese (Mandarin) | zh-Hans | 266 (~12%) | no | CJK system-font fallback (#38); IME unverified; PDF can't export | no | menus only | 8–13 h |
 | Spanish | es | 0 (0%) | no | Latin: yes | no | none | 6–10 h |
 | Hindi | hi | 0 (0%) | no | Devanagari: **no shaping** | no | none | 12–18 h |
-| Arabic | ar | 0 (0%) | no | **no shaping, no RTL UI**; Sheet Right-to-Left mirrors the grid and the chrome around it (#146) | no | none | 25–35 h |
+| Arabic | ar | 0 (0%) | no | joins where a face is loaded (the web build embeds one); figures keep their digit order, no other bidi layout; **no RTL UI strings**; Sheet Right-to-Left mirrors the grid and the chrome around it (#146) | no | none | 25–35 h |
 | French | fr | 0 (0%) | no | Latin: yes | no | none | 6–10 h |
 | Portuguese | pt-BR | 923 (~42%) | dialogs and tooltips (dialogs take effect with #669) | Latin: yes | no | menus, File view, dialogs | 2–4 h |
 | Indonesian | id | 0 (0%) | no | Latin: yes | no | none | 5–8 h |
@@ -74,14 +80,16 @@ language (none so far) and of localized function names.
 2. Locale-aware formulas: localized function-name tables and separators at the formula-bar
    boundary only (files keep en-US invariant names), locale number and date formats, list
    separators in CSV.
-3. Text shaping and fallback: a shaping engine for grid, editor and PDF text (Arabic, Devanagari,
-   Thai), system font fallback for CJK, bidirectional runs, a right-to-left ribbon group strip
-   (blocked on a directional `ScrollArea`) and printing; embedded subset fonts in PDF.
+3. Text shaping and fallback: Devanagari and Thai shaping for grid, editor and PDF text (Arabic
+   joins now, and the web build ships a face for it), bidirectional runs beyond the figure rule in
+   `bidi.rs`, a right-to-left ribbon group strip (blocked on a directional `ScrollArea`) and
+   printing; embedded subset fonts in PDF.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-21 | minor | An Arabic-Indic figure keeps its digit order in painted text. egui 0.36 has no bidirectional algorithm: it shapes each run after guessing that run's direction from its script (`epaint-0.36.2/src/text/text_layout.rs:1431`, with "heed bidi characters" still open at `text/font.rs:829`), so a cell holding `١٢٣٤٥` drew what an Arabic reader reads as ٥٤٣٢١ while its letters joined correctly. `crates/ui-egui/src/bidi.rs` now hands a figure — its digits, the separators between digits, a trailing `٪` — to the shaper pre-reversed, at the two places a value is painted: `grid::paint_quadrant`, which the print preview shares, and the formula bar's label. Text being edited keeps the bytes it holds, because its caret indexes them. Unit tests plus `tests/figure_order.rs` pin the wiring and the Latin path; the order itself is scored in the web build, where the leading glyph of the cell matches an isolated `١` and the `٪` of `٣٤٪` sits after the digits |
 | 2026-10-21 | minor | Sheet Right-to-Left now mirrors the chrome too: worksheet tabs read from the navigation cluster leftwards (drag reorder counts slots against that order), the ribbon's tab row and the formula bar mirror, and the horizontal scrollbar track spans to the grid's left edge. The ribbon's group strip keeps its order — `ScrollArea` has no direction, and a mirrored one measured at x = -365 with the wheel scrolling groups further off. `crates/ui-egui/tests/chrome_right_to_left.rs` pins both directions |
 | 2026-10-12 | minor | Format Cells looks up its tabs, labels, options and note through `Language::tr` (Fill tab keyed `Format Cells\|Fill`); dialog titles and OK/Cancel too. Labels already in a table (Number, Currency, Fill…) show translated; the rest fall back to English until the tables add them |
 | 2026-10-12 | minor | Brazilian Portuguese catalog (`i18n/pt.rs`) grows from 377 to 923 entries: every key the other catalogs translate, including the dialog strings #669 starts looking up (~42%) |

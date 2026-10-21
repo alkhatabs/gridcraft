@@ -54,8 +54,11 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
                 if app.editor.is_some() {
                     editor_widget(app, &mut child, id, theme::ui_font(13.0), expanded, field.width() - 12.0);
                 } else {
-                    // Show the active cell's content; clicking starts editing in the bar.
-                    let text = active_input(app);
+                    // Show the active cell's content; clicking starts editing in the bar. The figure
+                    // order is the one the grid gives the cell too, so the bar never shows a different
+                    // number from the cell it belongs to (`bidi`). The editor path above takes the
+                    // raw text: its caret indexes into that string.
+                    let text = crate::bidi::order_digits(&active_input(app)).into_owned();
                     let mut label = egui::Label::new(egui::RichText::new(text).font(theme::ui_font(13.0)).color(t.text))
                         .truncate()
                         .sense(Sense::click());
