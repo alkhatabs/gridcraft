@@ -161,6 +161,7 @@ scrollbar bugs 2–4 · pixel/feel pass against observed Excel 7–12.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-21 | minor | Right-to-left sheets mirror the chrome around the grid, as the grid already did: the worksheet tab strip reads from the navigation cluster leftwards and drag-reorder counts slots against that order, the ribbon's tab row (File tab included) reads from the right edge, the formula bar puts its Name Box at the right and the cell text against the right edge of the field, and the tab bar's horizontal scrollbar spans to the grid's left edge. The ribbon's group strip keeps its left-to-right order — `ScrollArea` has no direction, so a mirrored one put the last groups off screen and scrolled them further away. It also stops the card from taking its rect from the cursor the overflowing tab row leaves behind, which had been pulling it to x = -135 at a 520 px window |
 | 2026-10-12 | minor | The File view's recent list tells when each workbook was last changed, read off the UI thread |
 | 2026-10-13 | minor | Horizontal scrollbar in the sheet tab bar: drag, track click pages, frozen columns excluded from the page (#840) |
 | 2026-10-12 | minor | Ctrl+wheel zoom steps along a ladder of percentages about 20% apart that never skips 100%, gliding to each step with animations on, so a notch out undoes a notch in (it drifted: 100 → 122 → 101); Excel steps 15 points, see decisions.md |
