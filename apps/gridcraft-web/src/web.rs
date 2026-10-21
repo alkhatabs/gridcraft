@@ -29,6 +29,9 @@ pub fn start() {
         // workbooks in it and stores what it saves (`host`).
         let bridge = if query_param("host").as_deref() == Some("parent") { crate::host::Bridge::new() } else { None };
         let app_bridge = bridge.clone();
+        let siraaj_mode = bridge.is_none()
+            && query_param("siraaj").is_some()
+            && web_sys::window().is_some_and(|w| w.parent().ok().flatten().is_some());
         let result = eframe::WebRunner::new()
             .start(
                 canvas,
@@ -65,7 +68,8 @@ pub fn start() {
                         }
                         bridge.post_ready();
                     }
-                    Ok(Box::new(WebShell { app, inbox, bridge: app_bridge }))
+                    let siraaj = siraaj_mode.then(|| crate::siraaj::Siraaj::start(&mut app, inbox.clone(), cc.egui_ctx.clone()));
+                    Ok(Box::new(WebShell { app, inbox, bridge: app_bridge, siraaj }))
                 }),
             )
             .await;
@@ -93,6 +97,7 @@ struct WebShell {
     app: SheetApp,
     inbox: Inbox,
     bridge: Option<crate::host::Bridge>,
+    siraaj: Option<crate::siraaj::Siraaj>,
 }
 
 impl eframe::App for WebShell {
@@ -123,6 +128,9 @@ impl eframe::App for WebShell {
         self.app.ui(ui);
         if let Some(bridge) = &self.bridge {
             bridge.sync(&mut self.app);
+        }
+        if let Some(siraaj) = &self.siraaj {
+            siraaj.sync(&mut self.app);
         }
     }
 }
